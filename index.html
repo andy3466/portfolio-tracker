@@ -119,8 +119,9 @@ async function loadData() {
   return res.json();
 }
 
-const fmtUSD = (n) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
-const fmtTWD = (n) => n.toLocaleString("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 });
+// 明確自己加 US$ / NT$ 前綴，避免瀏覽器把兩種幣別都顯示成同一個 "$" 分不清楚。
+const fmtUSD = (n) => `US$${n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+const fmtTWD = (n) => `NT$${Math.round(n).toLocaleString("en-US")}`;
 const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 const fmtWan = (n) => `${Math.round(n / 10000).toLocaleString("zh-TW")}萬`;
 
