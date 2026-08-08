@@ -46,25 +46,36 @@ async function fetchYahoo(symbol) {
   throw lastErr || new Error(`${symbol}: all sources failed`);
 }
 
+const ROUNDS = 4;
+
+// 公開 proxy 不穩，單一 symbol 失敗常常只是當下運氣不好，
+// 所以失敗的 symbol 會整批再試好幾輪，輪與輪之間錯開時間，命中率高很多。
+async function fetchAllWithRetry(symbols) {
+  const results = {};
+  let pending = [...symbols];
+  for (let round = 1; round <= ROUNDS && pending.length; round++) {
+    const stillFailed = [];
+    for (const symbol of pending) {
+      try {
+        results[symbol] = await fetchYahoo(symbol);
+      } catch (e) {
+        console.error(`round ${round} failed for ${symbol}:`, e.message);
+        stillFailed.push(symbol);
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    pending = stillFailed;
+    if (pending.length) await new Promise(r => setTimeout(r, 4000 * round));
+  }
+  if (pending.length) console.error("gave up on:", pending.join(", "));
+  return results;
+}
+
 async function main() {
   const holdings = JSON.parse(await readFile(new URL("../holdings.json", import.meta.url), "utf8"));
 
-  const results = {};
-  for (const h of holdings) {
-    try {
-      results[h.symbol] = await fetchYahoo(h.symbol);
-    } catch (e) {
-      console.error(`failed to fetch ${h.symbol}:`, e.message);
-    }
-    await new Promise(r => setTimeout(r, 400));
-  }
-
-  let fx = null;
-  try {
-    fx = (await fetchYahoo(FX_SYMBOL)).price;
-  } catch (e) {
-    console.error("failed to fetch FX:", e.message);
-  }
+  const results = await fetchAllWithRetry([...holdings.map(h => h.symbol), FX_SYMBOL]);
+  const fx = results[FX_SYMBOL]?.price ?? null;
 
   const out = {
     generatedAt: new Date().toISOString(),
