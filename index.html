@@ -80,13 +80,13 @@
 <div class="sub" id="lastUpdated">尚未更新</div>
 
 <div class="controls">
-  <button id="refreshBtn">立即更新</button>
-  <label><input type="checkbox" id="autoToggle" checked> 自動更新</label>
+  <button id="refreshBtn">重新載入</button>
+  <label><input type="checkbox" id="autoToggle" checked> 自動重新載入</label>
   <label>間隔
     <select id="intervalSelect">
-      <option value="30000">30 秒</option>
-      <option value="60000" selected>60 秒</option>
-      <option value="300000">5 分鐘</option>
+      <option value="60000">1 分鐘</option>
+      <option value="300000" selected>5 分鐘</option>
+      <option value="900000">15 分鐘</option>
     </select>
   </label>
   <span class="status" id="statusMsg"></span>
@@ -108,61 +108,15 @@
 <div class="stock-grid" id="stockGrid"></div>
 
 <script>
-// ---- 持股設定：在這裡改股票、成本價、股數 ----
-// 股數是反推值：已知 MU 原始投入 600萬 TWD、佔總投入 89.88%，
-// 先推回總投入金額，再用當時的資金佔比 x 成本價反推各檔股數。
-// 因為沒有各檔實際購買當下的美元匯率，這裡用目前的 USD/TWD 匯率近似換算，
-// 所以股數是「估算值」，如果之後知道實際股數，直接改這裡的 shares 即可。
-const HOLDINGS = [
-  { symbol: "AMD",  cost: 354.00, shares: 9.227452,   note: "股數為反推估算值" },
-  { symbol: "MU",   cost: 465.50, shares: 399.856252, note: "原始投入 600萬 TWD，股數為反推估算值" },
-  { symbol: "RKLX", cost: 47.14,  shares: 30.758173,  note: "股數為反推估算值" },
-  { symbol: "SNXX", cost: 32.98,  shares: 492.130771, note: "股數為反推估算值" },
-];
+// 持股清單（成本價、股數、備註）跟報價都存在 data.json 裡，
+// 那個檔案是 GitHub Action 每小時排程呼叫 scripts/fetch-data.mjs 產生的，
+// 網頁本身只讀這個 static file，不用再即時打 Yahoo Finance，速度快很多也穩很多。
+const DATA_URL = "./data.json";
 
-const FX_SYMBOL = "TWD=X";
-const CHART_RANGE = "5d";
-const CHART_INTERVAL = "15m";
-
-// 免費、免金鑰，但透過公開 CORS proxy 打 Yahoo Finance，穩定度有限，
-// 所以準備多個 proxy 依序嘗試，全部失敗才顯示錯誤。
-const PROXIES = [
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
-];
-
-function fetchWithTimeout(url, ms) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { cache: "no-store", signal: ctrl.signal }).finally(() => clearTimeout(t));
-}
-
-async function fetchYahooChart(symbol, { range = "1d", interval = "1m" } = {}) {
-  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
-  let lastErr;
-  for (const wrap of PROXIES) {
-    try {
-      const res = await fetchWithTimeout(wrap(target), 9000);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const result = data?.chart?.result?.[0];
-      const price = result?.meta?.regularMarketPrice;
-      if (typeof price !== "number") throw new Error("no price in response");
-      const timestamps = result.timestamp || [];
-      const closes = result.indicators?.quote?.[0]?.close || [];
-      return {
-        price,
-        name: result.meta?.shortName || symbol,
-        series: timestamps
-          .map((t, i) => ({ t: t * 1000, v: closes[i] }))
-          .filter(p => typeof p.v === "number"),
-      };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error("all proxies failed");
+async function loadData() {
+  const res = await fetch(`${DATA_URL}?_=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 const fmtUSD = (n) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
@@ -307,23 +261,23 @@ function renderSummary({ totalCost, totalValue, totalGain, totalGainPct, fx }) {
 
 // 用最長的時間序列當作時間軸基準，其他股票用「往前找最近一筆」補值，
 // 加總各檔市值（股數 x 收盤價）得到總資產走勢，最後乘上即時匯率換算 TWD。
-function buildTotalTrend(chartResults, fx) {
+function buildTotalTrend(holdings, fx) {
   let base = null;
-  for (const r of chartResults) {
-    if (r && r.series && (!base || r.series.length > base.length)) base = r.series;
+  for (const h of holdings) {
+    if (h.series && (!base || h.series.length > base.length)) base = h.series;
   }
   if (!base || !fx) return [];
 
   return base.map((basePt) => {
     let total = 0;
-    for (let i = 0; i < HOLDINGS.length; i++) {
-      const series = chartResults[i]?.series;
+    for (const h of holdings) {
+      const series = h.series;
       if (!series || series.length === 0) continue;
       let match = series[0];
       for (const p of series) {
         if (p.t <= basePt.t) match = p; else break;
       }
-      total += match.v * HOLDINGS[i].shares;
+      total += match.v * h.shares;
     }
     return { t: basePt.t, v: total * fx };
   });
@@ -331,32 +285,40 @@ function buildTotalTrend(chartResults, fx) {
 
 async function refresh() {
   refreshBtn.disabled = true;
-  statusEl.textContent = "更新中…";
+  statusEl.textContent = "載入中…";
   statusEl.classList.remove("err");
 
-  const chartResults = await Promise.allSettled(
-    HOLDINGS.map(h => fetchYahooChart(h.symbol, { range: CHART_RANGE, interval: CHART_INTERVAL }))
-  );
-  const fxResult = await Promise.allSettled([fetchYahooChart(FX_SYMBOL, { range: CHART_RANGE, interval: CHART_INTERVAL })]);
-  const fx = fxResult[0].status === "fulfilled" ? fxResult[0].value.price : null;
+  let data;
+  try {
+    data = await loadData();
+  } catch (e) {
+    statusEl.textContent = `讀取 data.json 失敗（${e.message}），稍後會自動重試`;
+    statusEl.classList.add("err");
+    refreshBtn.disabled = false;
+    return;
+  }
+
+  const fx = data.fx ?? null;
+  const holdings = (data.holdings || []).map(h => ({
+    ...h,
+    series: (h.series || []).map(([t, v]) => ({ t, v })),
+  }));
 
   let failCount = 0;
   let totalCost = 0, totalValue = 0;
 
-  const rows = HOLDINGS.map((h, i) => {
-    const r = chartResults[i];
-    const data = r.status === "fulfilled" ? r.value : null;
-    if (!data) failCount++;
+  const rows = holdings.map(h => {
+    if (h.price == null) failCount++;
     const cost = h.cost * h.shares;
     totalCost += cost;
-    const marketValue = data ? data.price * h.shares : null;
+    const marketValue = h.price != null ? h.price * h.shares : null;
     if (marketValue != null) totalValue += marketValue;
     const gainUSD = marketValue == null ? null : marketValue - cost;
     return {
       symbol: h.symbol, cost: h.cost, shares: h.shares, note: h.note,
-      price: data?.price ?? null, name: data?.name, fx,
+      price: h.price ?? null, name: h.name, fx,
       marketValue, gainUSD,
-      sparkValues: data?.series?.map(p => p.v) ?? [],
+      sparkValues: h.series.map(p => p.v),
     };
   });
 
@@ -369,16 +331,17 @@ async function refresh() {
     fx,
   });
 
-  const trendPoints = buildTotalTrend(chartResults.map(r => r.status === "fulfilled" ? r.value : null), fx);
+  const trendPoints = buildTotalTrend(holdings, fx);
   renderTrendChart(trendPoints);
   if (trendPoints.length) trendValueEl.textContent = fmtTWD(trendPoints[trendPoints.length - 1].v);
 
-  lastUpdatedEl.textContent = `最後更新：${new Date().toLocaleTimeString("zh-TW")}`;
+  const generated = data.generatedAt ? new Date(data.generatedAt).toLocaleString("zh-TW") : "-";
+  lastUpdatedEl.textContent = `資料時間：${generated}（每小時自動更新一次，頁面於 ${new Date().toLocaleTimeString("zh-TW")} 讀取）`;
   if (failCount > 0 || fx == null) {
-    statusEl.textContent = `有 ${failCount + (fx == null ? 1 : 0)} 項資料抓取失敗，稍後會自動重試`;
+    statusEl.textContent = `有 ${failCount + (fx == null ? 1 : 0)} 項資料尚未成功抓取，等下一次排程更新`;
     statusEl.classList.add("err");
   } else {
-    statusEl.textContent = "已更新";
+    statusEl.textContent = "已載入";
   }
   refreshBtn.disabled = false;
 }
