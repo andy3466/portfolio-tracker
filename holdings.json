@@ -1,0 +1,6 @@
+[
+  { "symbol": "AMD",  "cost": 354.00, "shares": 9.227452,   "note": "股數為反推估算值" },
+  { "symbol": "MU",   "cost": 465.50, "shares": 399.856252, "note": "原始投入 600萬 TWD，股數為反推估算值" },
+  { "symbol": "RKLX", "cost": 47.14,  "shares": 30.758173,  "note": "股數為反推估算值" },
+  { "symbol": "SNXX", "cost": 32.98,  "shares": 492.130771, "note": "股數為反推估算值" }
+]
