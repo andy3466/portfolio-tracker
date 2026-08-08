@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sattis全資產戰情室</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --border:#30363d;
+    --text:#e6edf3; --dim:#8b949e;
+    --green:#3fb950; --red:#f85149; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:24px 16px 60px; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
+  }
+  h1{font-size:20px; margin:0 0 4px}
+  h2{font-size:14px; letter-spacing:.04em; color:var(--dim); text-transform:uppercase; margin:32px 0 12px}
+  .sub{color:var(--dim); font-size:13px; margin-bottom:20px}
+  .controls{display:flex; align-items:center; gap:10px; margin-bottom:18px; flex-wrap:wrap}
+  button{
+    background:var(--accent); color:#04122a; border:none; border-radius:6px;
+    padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;
+  }
+  button:disabled{opacity:.5; cursor:default}
+  .status{color:var(--dim); font-size:12px}
+  .status.err{color:var(--red)}
+  label{color:var(--dim); font-size:12px; display:flex; align-items:center; gap:5px}
+  select{background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 6px}
+
+  .summary{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:12px;
+  }
+  .card{
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:14px 16px;
+  }
+  .card .label{color:var(--dim); font-size:12px; margin-bottom:6px}
+  .card .value{font-size:20px; font-weight:600; font-variant-numeric:tabular-nums}
+  .card .sub-value{font-size:12px; color:var(--dim); margin-top:2px}
+  .up{color:var(--green)}
+  .down{color:var(--red)}
+
+  .stock-grid{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+    gap:14px;
+  }
+  .stock-card{
+    background:var(--card); border:1px solid var(--border); border-radius:12px;
+    padding:16px;
+  }
+  .stock-card .head{display:flex; align-items:center; justify-content:space-between; margin-bottom:2px}
+  .stock-card .ticker{font-size:15px; font-weight:700; color:var(--accent)}
+  .stock-card .badge{font-size:10px; color:var(--dim); border:1px solid var(--border); border-radius:20px; padding:2px 8px}
+  .stock-card .name{font-size:11px; color:var(--dim); margin-bottom:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .stock-card .price{font-size:24px; font-weight:700; font-variant-numeric:tabular-nums}
+  .stock-card .price-label{font-size:11px; color:var(--dim); margin-bottom:10px}
+  .stat-row{display:flex; justify-content:space-between; font-size:12px; color:var(--dim); padding:3px 0}
+  .stat-row span:last-child{color:var(--text); font-variant-numeric:tabular-nums}
+  .gain-line{font-size:13px; font-weight:600; margin:8px 0 6px; font-variant-numeric:tabular-nums}
+  .gain-sub{font-size:11px; color:var(--dim); margin-bottom:8px}
+  .note{font-size:10px; color:var(--dim); margin-top:2px}
+  .spark-wrap{margin-top:4px}
+  .spark-wrap svg{display:block; width:100%; height:56px}
+
+  .trend-card{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; margin-top:14px}
+  .trend-card .head{display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; margin-bottom:10px}
+  .trend-card .title{font-size:15px; font-weight:700}
+  .trend-card .value{font-size:22px; font-weight:700}
+  .trend-card svg{display:block; width:100%; height:220px}
+  .trend-card .caption{color:var(--dim); font-size:11px; margin-top:6px}
+  .axis-label{fill:var(--dim); font-size:10px}
+</style>
+</head>
+<body>
+
+<h1>Sattis全資產戰情室</h1>
+<div class="sub" id="lastUpdated">尚未更新</div>
+
+<div class="controls">
+  <button id="refreshBtn">立即更新</button>
+  <label><input type="checkbox" id="autoToggle" checked> 自動更新</label>
+  <label>間隔
+    <select id="intervalSelect">
+      <option value="30000">30 秒</option>
+      <option value="60000" selected>60 秒</option>
+      <option value="300000">5 分鐘</option>
+    </select>
+  </label>
+  <span class="status" id="statusMsg"></span>
+</div>
+
+<div class="summary" id="summaryCards"></div>
+
+<h2>總資產走勢</h2>
+<div class="trend-card">
+  <div class="head">
+    <div class="title">全資產總市值走勢</div>
+    <div class="value" id="trendValue">-</div>
+  </div>
+  <svg id="trendSvg" viewBox="0 0 800 240" preserveAspectRatio="none"></svg>
+  <div class="caption">資料以目前即時匯率換算成新台幣估算，區間約 5 天（15 分鐘一筆）</div>
+</div>
+
+<h2>個股持倉</h2>
+<div class="stock-grid" id="stockGrid"></div>
+
+<script>
+// ---- 持股設定：在這裡改股票、成本價、股數 ----
+// 股數是反推值：已知 MU 原始投入 600萬 TWD、佔總投入 89.88%，
+// 先推回總投入金額，再用當時的資金佔比 x 成本價反推各檔股數。
+// 因為沒有各檔實際購買當下的美元匯率，這裡用目前的 USD/TWD 匯率近似換算，
+// 所以股數是「估算值」，如果之後知道實際股數，直接改這裡的 shares 即可。
+const HOLDINGS = [
+  { symbol: "AMD",  cost: 354.00, shares: 9.227452,   note: "股數為反推估算值" },
+  { symbol: "MU",   cost: 465.50, shares: 399.856252, note: "原始投入 600萬 TWD，股數為反推估算值" },
+  { symbol: "RKLX", cost: 47.14,  shares: 30.758173,  note: "股數為反推估算值" },
+  { symbol: "SNXX", cost: 32.98,  shares: 492.130771, note: "股數為反推估算值" },
+];
+
+const FX_SYMBOL = "TWD=X";
+const CHART_RANGE = "5d";
+const CHART_INTERVAL = "15m";
+
+// 免費、免金鑰，但透過公開 CORS proxy 打 Yahoo Finance，穩定度有限，
+// 所以準備多個 proxy 依序嘗試，全部失敗才顯示錯誤。
+const PROXIES = [
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+
+function fetchWithTimeout(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { cache: "no-store", signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+async function fetchYahooChart(symbol, { range = "1d", interval = "1m" } = {}) {
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
+  let lastErr;
+  for (const wrap of PROXIES) {
+    try {
+      const res = await fetchWithTimeout(wrap(target), 9000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const result = data?.chart?.result?.[0];
+      const price = result?.meta?.regularMarketPrice;
+      if (typeof price !== "number") throw new Error("no price in response");
+      const timestamps = result.timestamp || [];
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      return {
+        price,
+        name: result.meta?.shortName || symbol,
+        series: timestamps
+          .map((t, i) => ({ t: t * 1000, v: closes[i] }))
+          .filter(p => typeof p.v === "number"),
+      };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("all proxies failed");
+}
+
+const fmtUSD = (n) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+const fmtTWD = (n) => n.toLocaleString("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 });
+const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+const fmtWan = (n) => `${Math.round(n / 10000).toLocaleString("zh-TW")}萬`;
+
+const stockGrid = document.getElementById("stockGrid");
+const summaryEl = document.getElementById("summaryCards");
+const statusEl = document.getElementById("statusMsg");
+const lastUpdatedEl = document.getElementById("lastUpdated");
+const refreshBtn = document.getElementById("refreshBtn");
+const autoToggle = document.getElementById("autoToggle");
+const intervalSelect = document.getElementById("intervalSelect");
+const trendSvg = document.getElementById("trendSvg");
+const trendValueEl = document.getElementById("trendValue");
+
+let timer = null;
+
+// ---- 小走勢圖 (sparkline) ----
+function sparklineSVG(values, { width = 280, height = 56 } = {}) {
+  if (!values || values.length < 2) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * width;
+    const y = height - ((v - min) / range) * height;
+    return [x, y];
+  });
+  const line = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${line} L${width},${height} L0,${height} Z`;
+  const gid = `g${Math.random().toString(36).slice(2, 9)}`;
+  return `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--green)" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="var(--green)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${area}" fill="url(#${gid})" stroke="none"/>
+      <path d="${line}" fill="none" stroke="var(--green)" stroke-width="1.6"/>
+    </svg>`;
+}
+
+// ---- 大走勢圖：總資產市值 ----
+function renderTrendChart(points) {
+  const width = 800, height = 240, padL = 60, padB = 24, padT = 10, padR = 10;
+  const plotW = width - padL - padR, plotH = height - padT - padB;
+  if (points.length < 2) { trendSvg.innerHTML = ""; return; }
+
+  const values = points.map(p => p.v);
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = (max - min) || 1;
+  const pad = span * 0.08;
+  const yMin = min - pad, yMax = max + pad;
+
+  const x = (i) => padL + (i / (points.length - 1)) * plotW;
+  const y = (v) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(points.length - 1).toFixed(1)},${padT + plotH} L${x(0).toFixed(1)},${padT + plotH} Z`;
+
+  // y-axis ticks
+  const tickCount = 4;
+  let yTicks = "";
+  for (let i = 0; i <= tickCount; i++) {
+    const v = yMin + (i / tickCount) * (yMax - yMin);
+    const yy = y(v);
+    yTicks += `
+      <line x1="${padL}" y1="${yy.toFixed(1)}" x2="${width - padR}" y2="${yy.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      <text class="axis-label" x="${padL - 8}" y="${(yy - 3).toFixed(1)}" text-anchor="end">${fmtWan(v)}</text>`;
+  }
+
+  // x-axis ticks
+  const xTickCount = Math.min(6, points.length - 1);
+  let xTicks = "";
+  for (let i = 0; i <= xTickCount; i++) {
+    const idx = Math.round((i / xTickCount) * (points.length - 1));
+    const d = new Date(points[idx].t);
+    const label = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    xTicks += `<text class="axis-label" x="${x(idx).toFixed(1)}" y="${height - 6}" text-anchor="middle">${label}</text>`;
+  }
+
+  trendSvg.innerHTML = `
+    <defs>
+      <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--green)" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="var(--green)" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    ${yTicks}
+    <path d="${area}" fill="url(#trendFill)" stroke="none"/>
+    <path d="${line}" fill="none" stroke="var(--green)" stroke-width="1.8"/>
+    ${xTicks}
+  `;
+}
+
+function renderStockCards(rows) {
+  stockGrid.innerHTML = rows.map(r => {
+    const cls = r.gainUSD == null ? "" : (r.gainUSD >= 0 ? "up" : "down");
+    const verb = (r.gainUSD ?? 0) >= 0 ? "賺" : "賠";
+    const diff = r.price == null ? null : r.price - r.cost;
+    return `<div class="stock-card">
+      <div class="head">
+        <span class="ticker">${r.symbol}</span>
+        <span class="badge">Yahoo API</span>
+      </div>
+      <div class="name">${r.name || ""}</div>
+      <div class="price ${cls}">${r.price == null ? "更新失敗" : fmtUSD(r.price)}</div>
+      <div class="price-label">最新現價・USD</div>
+      <div class="stat-row"><span>入場成本</span><span>${fmtUSD(r.cost)}</span></div>
+      <div class="stat-row"><span>持有數量（估算）</span><span>${r.shares.toFixed(2)} 股</span></div>
+      <div class="stat-row"><span>每股價差</span><span class="${cls}">${diff == null ? "-" : (diff >= 0 ? "+" : "") + diff.toFixed(2)}</span></div>
+      ${r.gainUSD == null ? "" : `
+        <div class="gain-line ${cls}">${verb} ${fmtUSD(Math.abs(r.gainUSD))}</div>
+        <div class="gain-sub">${r.fx ? `約 ${fmtTWD(Math.abs(r.gainUSD) * r.fx)}` : ""}</div>
+      `}
+      ${r.note ? `<div class="note">${r.note}</div>` : ""}
+      <div class="spark-wrap">${sparklineSVG(r.sparkValues)}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderSummary({ totalCost, totalValue, totalGain, totalGainPct, fx }) {
+  const cls = totalGain >= 0 ? "up" : "down";
+  const cards = [
+    { label: "總市值", value: fx ? fmtTWD(totalValue * fx) : fmtUSD(totalValue), sub: fx ? fmtUSD(totalValue) : "" },
+    { label: "總成本", value: fx ? fmtTWD(totalCost * fx) : fmtUSD(totalCost), sub: fx ? fmtUSD(totalCost) : "" },
+    { label: "總損益", value: fx ? `${totalGain >= 0 ? "+" : ""}${fmtTWD(totalGain * fx)}` : `${totalGain >= 0 ? "+" : ""}${fmtUSD(totalGain)}`, sub: fx ? `${totalGain >= 0 ? "+" : ""}${fmtUSD(totalGain)}` : "", cls },
+    { label: "總報酬率", value: fmtPct(totalGainPct), cls },
+    { label: "USD/TWD 匯率", value: fx ? fx.toFixed(3) : "-" },
+  ];
+  summaryEl.innerHTML = cards.map(c => `
+    <div class="card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls || ""}">${c.value}</div>
+      ${c.sub ? `<div class="sub-value ${c.cls || ""}">${c.sub}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+// 用最長的時間序列當作時間軸基準，其他股票用「往前找最近一筆」補值，
+// 加總各檔市值（股數 x 收盤價）得到總資產走勢，最後乘上即時匯率換算 TWD。
+function buildTotalTrend(chartResults, fx) {
+  let base = null;
+  for (const r of chartResults) {
+    if (r && r.series && (!base || r.series.length > base.length)) base = r.series;
+  }
+  if (!base || !fx) return [];
+
+  return base.map((basePt) => {
+    let total = 0;
+    for (let i = 0; i < HOLDINGS.length; i++) {
+      const series = chartResults[i]?.series;
+      if (!series || series.length === 0) continue;
+      let match = series[0];
+      for (const p of series) {
+        if (p.t <= basePt.t) match = p; else break;
+      }
+      total += match.v * HOLDINGS[i].shares;
+    }
+    return { t: basePt.t, v: total * fx };
+  });
+}
+
+async function refresh() {
+  refreshBtn.disabled = true;
+  statusEl.textContent = "更新中…";
+  statusEl.classList.remove("err");
+
+  const chartResults = await Promise.allSettled(
+    HOLDINGS.map(h => fetchYahooChart(h.symbol, { range: CHART_RANGE, interval: CHART_INTERVAL }))
+  );
+  const fxResult = await Promise.allSettled([fetchYahooChart(FX_SYMBOL, { range: CHART_RANGE, interval: CHART_INTERVAL })]);
+  const fx = fxResult[0].status === "fulfilled" ? fxResult[0].value.price : null;
+
+  let failCount = 0;
+  let totalCost = 0, totalValue = 0;
+
+  const rows = HOLDINGS.map((h, i) => {
+    const r = chartResults[i];
+    const data = r.status === "fulfilled" ? r.value : null;
+    if (!data) failCount++;
+    const cost = h.cost * h.shares;
+    totalCost += cost;
+    const marketValue = data ? data.price * h.shares : null;
+    if (marketValue != null) totalValue += marketValue;
+    const gainUSD = marketValue == null ? null : marketValue - cost;
+    return {
+      symbol: h.symbol, cost: h.cost, shares: h.shares, note: h.note,
+      price: data?.price ?? null, name: data?.name, fx,
+      marketValue, gainUSD,
+      sparkValues: data?.series?.map(p => p.v) ?? [],
+    };
+  });
+
+  renderStockCards(rows);
+  renderSummary({
+    totalCost,
+    totalValue,
+    totalGain: totalValue - totalCost,
+    totalGainPct: totalCost ? ((totalValue - totalCost) / totalCost) * 100 : 0,
+    fx,
+  });
+
+  const trendPoints = buildTotalTrend(chartResults.map(r => r.status === "fulfilled" ? r.value : null), fx);
+  renderTrendChart(trendPoints);
+  if (trendPoints.length) trendValueEl.textContent = fmtTWD(trendPoints[trendPoints.length - 1].v);
+
+  lastUpdatedEl.textContent = `最後更新：${new Date().toLocaleTimeString("zh-TW")}`;
+  if (failCount > 0 || fx == null) {
+    statusEl.textContent = `有 ${failCount + (fx == null ? 1 : 0)} 項資料抓取失敗，稍後會自動重試`;
+    statusEl.classList.add("err");
+  } else {
+    statusEl.textContent = "已更新";
+  }
+  refreshBtn.disabled = false;
+}
+
+function scheduleAuto() {
+  if (timer) clearInterval(timer);
+  if (autoToggle.checked) {
+    timer = setInterval(refresh, Number(intervalSelect.value));
+  }
+}
+
+refreshBtn.addEventListener("click", refresh);
+autoToggle.addEventListener("change", scheduleAuto);
+intervalSelect.addEventListener("change", scheduleAuto);
+
+refresh();
+scheduleAuto();
+</script>
+</body>
+</html>
